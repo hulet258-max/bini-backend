@@ -2,10 +2,10 @@
   "name": "bini-backend",
   "version": "1.0.0",
   "description": "Bini sales tracking API with PostgreSQL",
-  "main": "src/index.js",
+  "main": "src/app.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js",
     "test": "node --test",
     "reset-db": "node scripts/resetDatabase.js"
   },
