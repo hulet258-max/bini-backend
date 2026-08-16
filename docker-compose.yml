@@ -1,0 +1,41 @@
+# Local / reference stack (app + PostgreSQL).
+# On EasyPanel you usually create the App (GitHub + Dockerfile) and a
+# separate PostgreSQL service, then wire env vars between them.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PGUSER:-postgres}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-postgres}
+      POSTGRES_DB: ${PGDATABASE:-bini}
+    ports:
+      - "${PGPORT:-5432}:5432"
+    volumes:
+      - bini_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-postgres} -d ${PGDATABASE:-bini}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-5000}:5000"
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      APP_PIN: ${APP_PIN:-1234}
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${PGUSER:-postgres}
+      PGPASSWORD: ${PGPASSWORD:-postgres}
+      PGDATABASE: ${PGDATABASE:-bini}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  bini_pgdata:
