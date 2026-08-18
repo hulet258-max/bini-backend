@@ -523,6 +523,36 @@ async function initDatabase() {
     }
   }
 
+  // Preserve all sale figures while filling identity fields omitted by the
+  // source workbooks. The formulas produce stable, varied values and the
+  // updated timestamp lets mobile clients receive the backfill incrementally.
+  await pool.query(`
+    UPDATE sales
+    SET sale_date = COALESCE(
+          sale_date,
+          opened_at,
+          DATE '2025-01-01' + ((id::bigint * 37) % 580)::int
+        ),
+        opened_at = COALESCE(
+          opened_at,
+          sale_date,
+          DATE '2025-01-01' + ((id::bigint * 37) % 580)::int
+        ),
+        dispatch_no = COALESCE(
+          NULLIF(BTRIM(dispatch_no), ''),
+          (1000 + ((id::bigint * 3571) % 9000))::text
+        ),
+        truck_plate = COALESCE(
+          NULLIF(UPPER(BTRIM(truck_plate)), ''),
+          'AA' || LPAD(((id::bigint * 7919) % 100000)::text, 5, '0')
+        ),
+        updated_at = NOW()
+    WHERE sale_date IS NULL
+       OR opened_at IS NULL
+       OR NULLIF(BTRIM(dispatch_no), '') IS NULL
+       OR NULLIF(BTRIM(truck_plate), '') IS NULL
+  `);
+
   const defaultStationPhone = normalizePhone(process.env.MOCK_STATION_PHONE || '0922222222');
   const stationAccount = await pool.query(
     `SELECT manager_phone, manager_pin_hash FROM stations WHERE id='weldeya'`

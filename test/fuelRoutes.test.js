@@ -39,11 +39,25 @@ test('inactive machines stay at their previous last reading', () => {
   assert.equal(result.ends.m1R, 200);
 });
 
-test('active machines require a new last reading', () => {
+test('a blank active-machine reading carries forward and sells zero litres', () => {
   const result = validateDay({
     date: '2026-08-14', meters: { m1L: { end: '' } },
   }, { m1L: 100, m1R: 200, m2L: 300, m2R: 400 }, ['m1L']);
-  assert.match(result.error, /new last reading/);
+  assert.equal(result.error, undefined);
+  assert.equal(result.ends.m1L, 100);
+  assert.equal(result.sold, 0);
+});
+
+test('daily sold litres equal machine differences plus stack when some readings are blank', () => {
+  const result = validateDay({
+    date: '2026-08-14',
+    meters: {
+      m1L: { end: 125 }, m1R: { end: '' }, m2L: { end: 315 }, m2R: { end: null },
+    },
+    stackLitres: 3,
+  }, { m1L: 100, m1R: 200, m2L: 300, m2R: 400 });
+  assert.equal(result.sold, 43);
+  assert.deepEqual(result.ends, { m1L: 125, m1R: 200, m2L: 315, m2R: 400 });
 });
 
 test('load reconciliation subtracts remittances, expenses and cash held', () => {

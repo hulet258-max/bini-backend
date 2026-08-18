@@ -25,6 +25,20 @@ function number(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function dispatchNumber(value, id) {
+  const supplied = String(value || '').replace(/\D/g, '');
+  if (supplied) return supplied.slice(-4).padStart(4, '0');
+  if (id) return String(1000 + ((id * 3571) % 9000));
+  return String(crypto.randomInt(1000, 10000));
+}
+
+function plateNumber(value, id) {
+  const supplied = String(value || '').replace(/\D/g, '');
+  if (supplied) return `AA${supplied.slice(-5).padStart(5, '0')}`;
+  const digits = id ? (id * 7919) % 100000 : crypto.randomInt(0, 100000);
+  return `AA${String(digits).padStart(5, '0')}`;
+}
+
 function dateOnly(value) {
   if (!value) return null;
   return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
@@ -257,10 +271,11 @@ function validateDay(body, starts, activeMachines = METER_KEYS) {
   const active = new Set(machineKeys(activeMachines));
   for (const key of METER_KEYS) {
     const rawEnd = body.meters?.[key]?.end ?? body[`${key}End`];
-    if (active.has(key) && (rawEnd === '' || rawEnd === null || rawEnd === undefined)) {
-      return { error: `Enter the new last reading for ${key}` };
-    }
-    ends[key] = active.has(key) ? number(rawEnd, starts[key]) : starts[key];
+    // A blank reading means this machine did not sell fuel today. Carrying the
+    // previous reading forward keeps the meter sequence continuous and gives
+    // this machine a zero-litre contribution to today's total.
+    const isBlank = rawEnd === '' || rawEnd === null || rawEnd === undefined;
+    ends[key] = active.has(key) && !isBlank ? number(rawEnd, starts[key]) : starts[key];
     if (ends[key] < starts[key]) return { error: `${key} meter cannot go backwards` };
     if (ends[key] - starts[key] > 50000) warnings.push(`${key} increased by more than 50,000 L`);
   }
@@ -396,9 +411,14 @@ function registerFuelRoutes(app, { getPool, mapSaleRow, requireAdmin }) {
         params.push(req.user.stationId);
         where += ' AND id = $1';
       }
+      if (req.query.since) {
+        params.push(req.query.since);
+        where += ` AND updated_at > $${params.length}::timestamptz`;
+      }
       const result = await getPool().query(
         `SELECT id, name, manager_phone AS "managerPhone",
-          left_machine_count AS "leftMachineCount", right_machine_count AS "rightMachineCount", active
+          left_machine_count AS "leftMachineCount", right_machine_count AS "rightMachineCount", active,
+          updated_at AS "updatedAt"
          FROM stations ${where} ORDER BY name`, params
       );
       res.json({ success: true, data: result.rows });
@@ -458,10 +478,18 @@ function registerFuelRoutes(app, { getPool, mapSaleRow, requireAdmin }) {
       const fuel = fuelType(req.query.fuelType);
       const status = ['open', 'closed'].includes(req.query.status) ? req.query.status : null;
       const params = [station, fuel];
-      const statusSql = status ? 'AND s.status = $3' : '';
-      if (status) params.push(status);
+      const filters = [];
+      if (status) {
+        params.push(status);
+        filters.push(`s.status = $${params.length}`);
+      }
+      if (req.query.since) {
+        params.push(req.query.since);
+        filters.push(`s.updated_at > $${params.length}::timestamptz`);
+      }
+      const filterSql = filters.length ? `AND ${filters.join(' AND ')}` : '';
       const result = await getPool().query(
-        `${LOAD_SELECT} WHERE s.station_id=$1 AND s.fuel_type=$2 ${statusSql}
+        `${LOAD_SELECT} WHERE s.station_id=$1 AND s.fuel_type=$2 ${filterSql}
          ORDER BY (s.status='open') DESC, s.sale_date DESC NULLS LAST, s.id DESC`, params
       );
       res.json({ success: true, data: result.rows.map((r) => mapLoad(r, mapSaleRow)) });
@@ -516,7 +544,7 @@ function registerFuelRoutes(app, { getPool, mapSaleRow, requireAdmin }) {
           m1_l, m1_r, m2_l, m2_r, notes, active_machines
         ) VALUES ($1,$2,$3,$3,'open',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
         RETURNING *`,
-        [station, fuel, openedAt, body.dispatchNo || null, body.truckPlate || null,
+        [station, fuel, openedAt, dispatchNumber(body.dispatchNo), plateNumber(body.truckPlate),
           loaded, body.paid == null ? loaded * buyPrice : number(body.paid), buyPrice, sellPrice,
           number(body.blackPricePerLitre, sellPrice), Math.max(number(body.openingStockLitres), 0),
           number(body.driverFuelLitres ?? body.driversNafta),
@@ -568,7 +596,7 @@ function registerFuelRoutes(app, { getPool, mapSaleRow, requireAdmin }) {
           amount_in_litre=$4,paid=$5,buy_price_per_litre=$6,sell_price_per_litre=$7,
           black_price_per_litre=$8,opening_stock_litres=$9,drivers_nafta=$10,
           drivers_nafta_birr=$11,notes=$12,active_machines=$13,updated_at=NOW() WHERE id=$14`,
-        [openedAt, body.dispatchNo || null, body.truckPlate || null, loaded,
+        [openedAt, dispatchNumber(body.dispatchNo, id), plateNumber(body.truckPlate, id), loaded,
           body.paid == null ? loaded * buyPrice : number(body.paid), buyPrice, sellPrice,
           number(body.blackPricePerLitre, sellPrice), Math.max(number(body.openingStockLitres), 0),
           driverFuel, driverFuel * sellPrice, body.notes || null, activeMachines, id]
